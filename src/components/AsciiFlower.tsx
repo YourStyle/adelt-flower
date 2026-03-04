@@ -140,7 +140,7 @@ export function AsciiFlower() {
 
       for (let i = 0; i < TOTAL_FRAMES; i++) {
         const img = new Image()
-        img.src = `/frames/frame_${String(i).padStart(3, '0')}.jpg`
+        img.src = `${import.meta.env.BASE_URL}frames/frame_${String(i).padStart(3, '0')}.jpg`
 
         await new Promise<void>((resolve, reject) => {
           img.onload = () => {
