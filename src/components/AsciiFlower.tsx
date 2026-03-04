@@ -136,21 +136,33 @@ export function AsciiFlower() {
 
   useEffect(() => {
     const loadImages = async () => {
-      const images: HTMLImageElement[] = []
-
-      for (let i = 0; i < TOTAL_FRAMES; i++) {
-        const img = new Image()
-        img.src = `${import.meta.env.BASE_URL}frames/frame_${String(i).padStart(3, '0')}.jpg`
-
-        await new Promise<void>((resolve, reject) => {
-          img.onload = () => {
-            setLoadProgress(Math.round(((i + 1) / TOTAL_FRAMES) * 100))
-            resolve()
+      const loadOneImage = (i: number, retries = 3): Promise<HTMLImageElement> => {
+        return new Promise((resolve, reject) => {
+          const img = new Image()
+          img.src = `${import.meta.env.BASE_URL}frames/frame_${String(i).padStart(3, '0')}.jpg`
+          img.onload = () => resolve(img)
+          img.onerror = () => {
+            if (retries > 0) {
+              setTimeout(() => loadOneImage(i, retries - 1).then(resolve, reject), 500)
+            } else {
+              reject(new Error(`Failed to load frame ${i}`))
+            }
           }
-          img.onerror = reject
         })
+      }
 
-        images.push(img)
+      let loaded = 0
+      const BATCH_SIZE = 10
+      const images: HTMLImageElement[] = new Array(TOTAL_FRAMES)
+
+      for (let batch = 0; batch < TOTAL_FRAMES; batch += BATCH_SIZE) {
+        const indices = Array.from({ length: Math.min(BATCH_SIZE, TOTAL_FRAMES - batch) }, (_, k) => batch + k)
+        const results = await Promise.all(indices.map(i => loadOneImage(i)))
+        results.forEach((img, k) => {
+          images[batch + k] = img
+        })
+        loaded += results.length
+        setLoadProgress(Math.round((loaded / TOTAL_FRAMES) * 100))
       }
 
       imagesRef.current = images
