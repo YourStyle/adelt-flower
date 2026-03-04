@@ -625,7 +625,7 @@ export function AsciiFlower() {
         alignItems: 'center',
         justifyContent: 'center',
         height: '100vh',
-        background: 'radial-gradient(ellipse at 50% 40%, #1a1a2e 0%, #0d0d15 70%, #050508 100%)',
+        background: 'transparent',
         color: '#c9b99a',
         fontFamily: '"Courier New", monospace',
         letterSpacing: '3px',
@@ -665,17 +665,10 @@ export function AsciiFlower() {
         position: 'relative',
         minHeight: '100vh',
         overflow: 'hidden',
-        background: 'radial-gradient(ellipse at 50% 40%, #1a1a2e 0%, #0d0d15 70%, #050508 100%)',
+        background: 'transparent',
       }}
       onMouseMove={handleMouseMove}
     >
-      {/* Vignette overlay */}
-      <div style={{
-        position: 'fixed', inset: 0,
-        background: 'radial-gradient(ellipse at 50% 45%, transparent 40%, rgba(0,0,0,0.6) 100%)',
-        pointerEvents: 'none',
-        zIndex: 10,
-      }} />
 
       <canvas ref={canvasRef} style={{ display: 'none' }} />
 
