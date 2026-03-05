@@ -4,12 +4,12 @@ const TOTAL_FRAMES = 109
 const ASCII_CHARS = ' .LTEAD'
 const STEM_CHARS = ' ....A...D...E...L...T'
 const BG_THRESHOLD = 35
+const WIDTH = 140
+const HEIGHT = 85
 
-// Chrysanthemum petal - elongated with wider tip
 const PETAL_CHARS = ['A', 'D', 'E', 'L', 'T']
 
 const PETAL_TEMPLATES = [
-  // Smooth teardrop petal
   [
     '     AAAA',
     '    ADDDDA',
@@ -22,7 +22,6 @@ const PETAL_TEMPLATES = [
     '      ADA',
     '       A',
   ],
-  // Wider rounded petal
   [
     '    AAAAA',
     '   ADDDDDA',
@@ -35,7 +34,6 @@ const PETAL_TEMPLATES = [
     '      ADA',
     '       A',
   ],
-  // Slender elegant petal
   [
     '       AA',
     '      ADDA',
@@ -82,22 +80,79 @@ interface FlyingPetal {
   charOffset: number
   baseRotation: number
   tornChars: { row: number; col: number; tearTime: number }[]
-  spinSpeed: number     // continuous rotation speed (deg/s)
-  swayPeriod: number    // horizontal oscillation period (s)
-  dragFactor: number    // per-petal air resistance variation
+  spinSpeed: number
+  swayPeriod: number
+  dragFactor: number
+}
+
+function convertImageToAscii(img: HTMLImageElement, canvas: HTMLCanvasElement): string {
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+
+  canvas.width = img.width
+  canvas.height = img.height
+  ctx.drawImage(img, 0, 0)
+
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
+  const pixels = imageData.data
+
+  const cellWidth = canvas.width / WIDTH
+  const cellHeight = canvas.height / HEIGHT
+
+  const strideX = Math.max(1, Math.floor(cellWidth / 3))
+  const strideY = Math.max(1, Math.floor(cellHeight / 3))
+
+  let result = ''
+
+  for (let y = 0; y < HEIGHT; y++) {
+    let line = ''
+    for (let x = 0; x < WIDTH; x++) {
+      let totalBrightness = 0
+      let count = 0
+
+      for (let py = 0; py < cellHeight; py += strideY) {
+        for (let px = 0; px < cellWidth; px += strideX) {
+          const sourceX = Math.floor(x * cellWidth + px)
+          const sourceY = Math.floor(y * cellHeight + py)
+
+          if (sourceX >= canvas.width || sourceY >= canvas.height) {
+            count++
+            continue
+          }
+
+          const i = (sourceY * canvas.width + sourceX) * 4
+          totalBrightness += (pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114)
+          count++
+        }
+      }
+
+      const avgBrightness = totalBrightness / count
+
+      if (avgBrightness < BG_THRESHOLD) {
+        line += ' '
+      } else {
+        const isStemArea = y > HEIGHT * 0.6
+        const chars = isStemArea ? STEM_CHARS : ASCII_CHARS
+        const brightness = isStemArea ? avgBrightness * 0.6 : avgBrightness
+        let charIndex = Math.floor((brightness / 255) * (chars.length - 1))
+        if (isStemArea) {
+          charIndex = (charIndex + x + y) % chars.length
+        }
+        line += chars[Math.min(charIndex, chars.length - 1)]
+      }
+    }
+    result += line + '\n'
+  }
+
+  return result
 }
 
 export function AsciiFlower() {
-  const width = 140
-  const height = 85 // Reduced to cut off stem
-
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [ascii, setAscii] = useState<string>('')
+  const [asciiFrames, setAsciiFrames] = useState<string[] | null>(null)
   const [currentFrame, setCurrentFrame] = useState(0)
   const [isPlaying, setIsPlaying] = useState(true)
   const [isLoading, setIsLoading] = useState(true)
   const [loadProgress, setLoadProgress] = useState(0)
-  const imagesRef = useRef<HTMLImageElement[]>([])
   const animationRef = useRef<number>()
   const lastFrameTimeRef = useRef<number>(0)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -120,17 +175,15 @@ export function AsciiFlower() {
   const lastMousePositionRef = useRef<{ x: number; y: number } | null>(null)
   const lastPetalTimeRef = useRef(0)
 
-  // For bud sway — spring physics
+  // Bud sway — spring physics
   const [budSway, setBudSway] = useState({ x: 0, y: 0 })
   const budSwayTargetRef = useRef({ x: 0, y: 0 })
   const budSwayVelocityRef = useRef({ x: 0, y: 0 })
-  const budSwayAnimationRef = useRef<number>()
 
-  // Mouse displacement effect on flower characters
+  // Mouse displacement effect
   const mouseCharTargetRef = useRef<{ x: number; y: number } | null>(null)
   const [mouseDisplace, setMouseDisplace] = useState<{ x: number; y: number; strength: number } | null>(null)
 
-  // Store position from the last frame to keep flower stable
   const contentCenterXRef = useRef<number | null>(null)
   const stemBottomRef = useRef<number | null>(null)
 
@@ -165,20 +218,23 @@ export function AsciiFlower() {
         setLoadProgress(Math.round((loaded / TOTAL_FRAMES) * 100))
       }
 
-      imagesRef.current = images
+      // Pre-compute all ASCII frames at load time
+      const canvas = document.createElement('canvas')
+      const frames: string[] = new Array(TOTAL_FRAMES)
+      for (let i = 0; i < TOTAL_FRAMES; i++) {
+        frames[i] = convertImageToAscii(images[i], canvas)
+      }
 
-      // Calculate stem bottom Y from the LAST frame (fully open flower)
+      // Calculate stem bottom Y from the last frame
       const lastImg = images[images.length - 1]
-      const tempCanvas = document.createElement('canvas')
-      tempCanvas.width = lastImg.width
-      tempCanvas.height = lastImg.height
-      const tempCtx = tempCanvas.getContext('2d')
+      canvas.width = lastImg.width
+      canvas.height = lastImg.height
+      const tempCtx = canvas.getContext('2d')
       if (tempCtx) {
         tempCtx.drawImage(lastImg, 0, 0)
         const imageData = tempCtx.getImageData(0, 0, lastImg.width, lastImg.height)
         const pixels = imageData.data
 
-        // Find content center X and stem bottom Y from last frame
         let contentMinX = lastImg.width, contentMaxX = 0, stemMaxY = 0
         const stemStartY = Math.floor(lastImg.height * 0.8)
 
@@ -198,83 +254,23 @@ export function AsciiFlower() {
         stemBottomRef.current = stemMaxY
       }
 
+      setAsciiFrames(frames)
       setIsLoading(false)
     }
 
     loadImages()
   }, [])
 
-  const convertToAscii = useCallback((img: HTMLImageElement): string => {
-    const canvas = canvasRef.current
-    if (!canvas) return ''
-
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return ''
-
-    canvas.width = img.width
-    canvas.height = img.height
-    ctx.drawImage(img, 0, 0)
-
-    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-    const pixels = imageData.data
-
-    const cellWidth = canvas.width / width
-    const cellHeight = canvas.height / height
-
-    let result = ''
-
-    for (let y = 0; y < height; y++) {
-      let line = ''
-      for (let x = 0; x < width; x++) {
-        let totalBrightness = 0
-        let count = 0
-
-        for (let py = 0; py < cellHeight; py++) {
-          for (let px = 0; px < cellWidth; px++) {
-            const sourceX = Math.floor(x * cellWidth + px)
-            const sourceY = Math.floor(y * cellHeight + py)
-
-            if (sourceX < 0 || sourceX >= canvas.width || sourceY < 0 || sourceY >= canvas.height) {
-              count++
-              continue
-            }
-
-            const i = (sourceY * canvas.width + sourceX) * 4
-            totalBrightness += (pixels[i] * 0.299 + pixels[i + 1] * 0.587 + pixels[i + 2] * 0.114)
-            count++
-          }
-        }
-
-        const avgBrightness = totalBrightness / count
-
-        if (avgBrightness < BG_THRESHOLD) {
-          line += ' '
-        } else {
-          const isStemArea = y > height * 0.6
-          const chars = isStemArea ? STEM_CHARS : ASCII_CHARS
-          const brightness = isStemArea ? avgBrightness * 0.6 : avgBrightness
-          let charIndex = Math.floor((brightness / 255) * (chars.length - 1))
-          if (isStemArea) {
-            charIndex = (charIndex + x + y) % chars.length
-          }
-          line += chars[Math.min(charIndex, chars.length - 1)]
-        }
-      }
-      result += line + '\n'
-    }
-
-    return result
-  }, [width, height])
-
+  // Single merged animation loop: frame advance + sway physics + mouse displacement
   useEffect(() => {
-    if (isLoading || imagesRef.current.length === 0) return
+    if (isLoading) return
 
     const SWAY_START = 60
     const SWAY_END = TOTAL_FRAMES - 1
 
     const animate = (timestamp: number) => {
+      // --- Frame advance ---
       if (isPlaying) {
-        // Slower animation: growing ~20fps, swaying ~12fps
         const frameTime = animationPhase === 'swaying' ? 80 : 50
 
         if (timestamp - lastFrameTimeRef.current >= frameTime) {
@@ -287,7 +283,6 @@ export function AsciiFlower() {
               return prev + 1
             } else {
               let next = prev + swayDirectionRef.current
-
               if (next >= SWAY_END) {
                 swayDirectionRef.current = -1
                 next = SWAY_END - 1
@@ -295,13 +290,59 @@ export function AsciiFlower() {
                 swayDirectionRef.current = 1
                 next = SWAY_START + 1
               }
-
               return next
             }
           })
           lastFrameTimeRef.current = timestamp
         }
       }
+
+      // --- Spring-physics sway with ambient wind ---
+      const now = timestamp / 1000
+      const target = budSwayTargetRef.current
+      const vel = budSwayVelocityRef.current
+
+      const hasMouseInput = Math.abs(target.x) > 0.1 || Math.abs(target.y) > 0.1
+      const windX = hasMouseInput ? 0
+        : Math.sin(now * 0.4) * 1.8 + Math.sin(now * 0.7 + 0.5) * 1.0 + Math.sin(now * 1.3) * 0.5
+      const finalTargetX = target.x + windX
+      const finalTargetY = target.y
+
+      const stiffness = 0.015
+      const damping = 0.92
+
+      setBudSway(prev => {
+        vel.x += (finalTargetX - prev.x) * stiffness
+        vel.y += (finalTargetY - prev.y) * stiffness
+        vel.x *= damping
+        vel.y *= damping
+
+        return {
+          x: prev.x + vel.x,
+          y: prev.y + vel.y
+        }
+      })
+
+      // --- Mouse displacement ---
+      setMouseDisplace(prev => {
+        const mTarget = mouseCharTargetRef.current
+        if (mTarget) {
+          if (prev) {
+            return {
+              x: prev.x + (mTarget.x - prev.x) * 0.04,
+              y: prev.y + (mTarget.y - prev.y) * 0.04,
+              strength: prev.strength + (1 - prev.strength) * 0.05
+            }
+          }
+          return { x: mTarget.x, y: mTarget.y, strength: 0.02 }
+        } else {
+          if (prev && prev.strength > 0.005) {
+            return { ...prev, strength: prev.strength * 0.96 }
+          }
+          return null
+        }
+      })
+
       animationRef.current = requestAnimationFrame(animate)
     }
 
@@ -314,11 +355,7 @@ export function AsciiFlower() {
     }
   }, [isLoading, isPlaying, animationPhase])
 
-  useEffect(() => {
-    if (imagesRef.current[currentFrame]) {
-      setAscii(convertToAscii(imagesRef.current[currentFrame]))
-    }
-  }, [currentFrame, convertToAscii])
+  const ascii = asciiFrames?.[currentFrame] ?? ''
 
   const isOverFlower = useCallback((clientX: number, clientY: number): boolean => {
     const pre = preRef.current
@@ -360,7 +397,6 @@ export function AsciiFlower() {
           y: Math.max(0, relY) * 2
         }
 
-        // Track cursor in character grid coordinates for displacement
         mouseCharTargetRef.current = {
           x: (e.clientX - rect.left) / 5,
           y: (e.clientY - rect.top) / 10
@@ -391,7 +427,7 @@ export function AsciiFlower() {
       mouseCharTargetRef.current = null
     }
 
-    // Spawn petals when leaving flower — with cooldown
+    // Spawn petals when leaving flower
     const now2 = Date.now()
     if (wasOverFlowerRef.current && !isCurrentlyOverFlower && lastOverPositionRef.current && lastMousePositionRef.current && now2 - lastPetalTimeRef.current > 800) {
       const dx = currentPos.x - lastOverPositionRef.current.x
@@ -402,25 +438,19 @@ export function AsciiFlower() {
 
       if (dist > 5 && isHorizontalExit) {
         lastPetalTimeRef.current = now2
-        // Arc trajectory: initial upward + sideways push, then slow fall
         const dirX = (dx / dist) * (0.5 + Math.random() * 0.5)
 
-        // Get flower position for landing Y - land at the base of stem
         const pre = preRef.current
         const preRect = pre?.getBoundingClientRect()
-        // Land at the bottom edge of the flower (at stem base)
         const landingY = preRect ? preRect.bottom - 30 + Math.random() * 20 : window.innerHeight - 150
 
-        // Generate 3-4 random edge characters to tear off
         const templateIdx = Math.floor(Math.random() * PETAL_TEMPLATES.length)
         const template = PETAL_TEMPLATES[templateIdx]
         const edgeChars: { row: number; col: number }[] = []
 
-        // Find edge characters (first or last non-space in each row)
         template.forEach((line, row) => {
           for (let col = 0; col < line.length; col++) {
             if (line[col] !== ' ') {
-              // Check if it's an edge (next to space or boundary)
               const isLeftEdge = col === 0 || line[col - 1] === ' '
               const isRightEdge = col === line.length - 1 || line[col + 1] === ' '
               if (isLeftEdge || isRightEdge) {
@@ -430,17 +460,14 @@ export function AsciiFlower() {
           }
         })
 
-        // Pick 3-4 random edge characters to tear at different times
         const numTears = 3 + Math.floor(Math.random() * 2)
         const shuffled = edgeChars.sort(() => Math.random() - 0.5).slice(0, numTears)
         const tornChars = shuffled.map((char, i) => ({
           ...char,
-          tearTime: 0.5 + Math.random() * 2 + i * 0.3 // Staggered tear times
+          tearTime: 0.5 + Math.random() * 2 + i * 0.3
         }))
 
-        // Slight random tilt
         const randomTilt = (Math.random() - 0.5) * 40
-        // Fall vertically with slight tilt, not horizontal
         const baseRot = (Math.random() > 0.5 ? 0 : 180) + (Math.random() - 0.5) * 30
 
         const newPetal: FlyingPetal = {
@@ -480,14 +507,13 @@ export function AsciiFlower() {
     return () => clearInterval(cleanup)
   }, [])
 
-  // Pollen emitter — gentle particles rising from the bud
+  // Pollen emitter
   useEffect(() => {
     if (animationPhase !== 'swaying') return
     const emit = setInterval(() => {
       const pre = preRef.current
       if (!pre) return
       const rect = pre.getBoundingClientRect()
-      // Emit from the top 30% of the flower (bud area)
       const budTop = rect.top + rect.height * 0.05
       const budBottom = rect.top + rect.height * 0.3
       const budLeft = rect.left + rect.width * 0.3
@@ -507,66 +533,6 @@ export function AsciiFlower() {
     }, 800 + Math.random() * 400)
     return () => clearInterval(emit)
   }, [animationPhase])
-
-  // Spring-physics sway with ambient wind
-  useEffect(() => {
-    const animateSway = () => {
-      const now = Date.now() / 1000
-      const target = budSwayTargetRef.current
-      const vel = budSwayVelocityRef.current
-
-      // Ambient wind sway when mouse is not over flower
-      const hasMouseInput = Math.abs(target.x) > 0.1 || Math.abs(target.y) > 0.1
-      const windX = hasMouseInput ? 0
-        : Math.sin(now * 0.4) * 1.8 + Math.sin(now * 0.7 + 0.5) * 1.0 + Math.sin(now * 1.3) * 0.5
-      const finalTargetX = target.x + windX
-      const finalTargetY = target.y
-
-      // Damped spring: soft stiffness + moderate damping = airy, bouncy
-      const stiffness = 0.015
-      const damping = 0.92
-
-      setBudSway(prev => {
-        vel.x += (finalTargetX - prev.x) * stiffness
-        vel.y += (finalTargetY - prev.y) * stiffness
-        vel.x *= damping
-        vel.y *= damping
-
-        return {
-          x: prev.x + vel.x,
-          y: prev.y + vel.y
-        }
-      })
-
-      // Smooth mouse displacement position — lazy, gentle tracking
-      setMouseDisplace(prev => {
-        const mTarget = mouseCharTargetRef.current
-        if (mTarget) {
-          if (prev) {
-            return {
-              x: prev.x + (mTarget.x - prev.x) * 0.04,
-              y: prev.y + (mTarget.y - prev.y) * 0.04,
-              strength: prev.strength + (1 - prev.strength) * 0.05
-            }
-          }
-          return { x: mTarget.x, y: mTarget.y, strength: 0.02 }
-        } else {
-          if (prev && prev.strength > 0.005) {
-            return { ...prev, strength: prev.strength * 0.96 }
-          }
-          return null
-        }
-      })
-
-      budSwayAnimationRef.current = requestAnimationFrame(animateSway)
-    }
-    budSwayAnimationRef.current = requestAnimationFrame(animateSway)
-    return () => {
-      if (budSwayAnimationRef.current) {
-        cancelAnimationFrame(budSwayAnimationRef.current)
-      }
-    }
-  }, [])
 
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
@@ -622,13 +588,6 @@ export function AsciiFlower() {
     return () => container.removeEventListener('wheel', handleWheel)
   }, [handleWheel])
 
-  const restartAnimation = () => {
-    setCurrentFrame(0)
-    setAnimationPhase('growing')
-    setIsPlaying(true)
-    swayDirectionRef.current = 1
-  }
-
   if (isLoading) {
     return (
       <div style={{
@@ -681,9 +640,6 @@ export function AsciiFlower() {
       }}
       onMouseMove={handleMouseMove}
     >
-
-      <canvas ref={canvasRef} style={{ display: 'none' }} />
-
       <div style={{ position: 'relative', zIndex: 1 }}>
         <pre
           ref={preRef}
@@ -734,12 +690,10 @@ export function AsciiFlower() {
                     const GLOW_SIGMA = 8
                     const intensity = Math.exp(-(dist2d * dist2d) / (2 * GLOW_SIGMA * GLOW_SIGMA)) * mc.strength
 
-                    // Wave delay: effect arrives later for farther chars
                     const waveDelay = dist2d * 0.04
                     const wavePhase = now / 600 - waveDelay
                     const wavePulse = (Math.sin(wavePhase) * 0.5 + 0.5) * intensity
 
-                    // Warm glow: cream → golden white
                     const r = Math.round(212 + 43 * intensity)
                     const g = Math.round(197 + 48 * intensity)
                     const b = Math.round(169 + 56 * intensity)
@@ -747,10 +701,7 @@ export function AsciiFlower() {
                       ? `0 0 ${4 + intensity * 10}px rgba(235,220,180,${intensity * 0.35}), 0 0 ${1 + intensity * 3}px rgba(255,245,220,${intensity * 0.2})`
                       : ''
 
-                    // Scale pulse
                     const scale = 1 + wavePulse * 0.15
-
-                    // Slight vertical lift toward cursor
                     const lift = -dy * intensity * 0.4
 
                     if (intensity < 0.02) return <span key={j}>{char}</span>
@@ -785,14 +736,12 @@ export function AsciiFlower() {
         {flyingPetals.map(petal => {
           const elapsed = (now - petal.startTime) / 1000
 
-          // Air resistance physics
           const gravity = 100
           const drag = 1.6 * petal.dragFactor
           const vTerminal = gravity / drag
           const tau = 1 / drag
           const v0 = petal.velocityY * 10
 
-          // Position calculator for any time t
           const posAt = (t: number) => {
             const py = petal.startY + vTerminal * t + tau * (v0 - vTerminal) * (1 - Math.exp(-t / tau))
             const swayAmp = 25 + (petal.id % 4) * 8
@@ -804,12 +753,10 @@ export function AsciiFlower() {
 
           const pos = posAt(elapsed)
 
-          // Rotation
           const tumble = Math.sin(elapsed * 1.3 + petal.rotation * 0.08) * 30 + Math.sin(elapsed * 0.8) * 15
           const spin = elapsed * petal.spinSpeed
           const currentRotation = petal.baseRotation + tumble + spin
 
-          // Animate letters
           const charShift = Math.floor(elapsed * 2.5 + petal.charOffset) % PETAL_CHARS.length
           const template = PETAL_TEMPLATES[petal.templateIndex]
           const animatedTemplate = template.map((line, row) =>
@@ -823,7 +770,6 @@ export function AsciiFlower() {
             }).join('')
           )
 
-          // 3D tumble + curl
           const flipPhaseY = petal.id * 1.3 + petal.rotation * 0.05
           const flipPhaseX = petal.id * 0.9 + petal.rotation * 0.03
           const flipY = Math.sin(elapsed * 2.0 + flipPhaseY) * 75
@@ -974,7 +920,7 @@ export function AsciiFlower() {
         })}
       </div>
 
-      {/* Parallax background — faint drifting symbols behind everything */}
+      {/* Parallax background */}
       {animationPhase === 'swaying' && Array.from({ length: 6 }, (_, i) => {
         const seed = i * 137.5
         const t = now / 1000
@@ -999,83 +945,6 @@ export function AsciiFlower() {
           </span>
         )
       })}
-
-      {/* Minimal controls — appear on hover at bottom */}
-      <div
-        style={{
-          position: 'fixed',
-          bottom: 0,
-          left: 0,
-          right: 0,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '20px',
-          padding: '20px 0 24px',
-          opacity: 0,
-          transition: 'opacity 0.6s ease',
-          zIndex: 20,
-          background: 'linear-gradient(transparent, rgba(5,5,8,0.8))',
-        }}
-        onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
-        onMouseLeave={e => (e.currentTarget.style.opacity = '0')}
-      >
-        <button
-          onClick={restartAnimation}
-          style={{
-            background: 'none',
-            color: '#6b5f4f',
-            border: '1px solid #2a2520',
-            padding: '6px 14px',
-            borderRadius: '2px',
-            cursor: 'pointer',
-            fontSize: '10px',
-            fontFamily: '"Courier New", monospace',
-            letterSpacing: '2px',
-            textTransform: 'lowercase',
-            transition: 'color 0.3s, border-color 0.3s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#c9b99a'; e.currentTarget.style.borderColor = '#4a3f2f' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b5f4f'; e.currentTarget.style.borderColor = '#2a2520' }}
-        >
-          restart
-        </button>
-
-        <button
-          onClick={() => setIsPlaying(prev => !prev)}
-          style={{
-            background: 'none',
-            color: '#6b5f4f',
-            border: '1px solid #2a2520',
-            padding: '6px 14px',
-            borderRadius: '2px',
-            cursor: 'pointer',
-            fontSize: '10px',
-            fontFamily: '"Courier New", monospace',
-            letterSpacing: '2px',
-            textTransform: 'lowercase',
-            minWidth: '60px',
-            transition: 'color 0.3s, border-color 0.3s',
-          }}
-          onMouseEnter={e => { e.currentTarget.style.color = '#c9b99a'; e.currentTarget.style.borderColor = '#4a3f2f' }}
-          onMouseLeave={e => { e.currentTarget.style.color = '#6b5f4f'; e.currentTarget.style.borderColor = '#2a2520' }}
-        >
-          {isPlaying ? 'pause' : 'play'}
-        </button>
-
-        <input
-          type="range"
-          min={0}
-          max={TOTAL_FRAMES - 1}
-          value={currentFrame}
-          onChange={(e) => {
-            setIsPlaying(false)
-            setAnimationPhase('growing')
-            setCurrentFrame(Number(e.target.value))
-          }}
-          style={{ width: '100px', cursor: 'pointer', opacity: 0.4 }}
-        />
-      </div>
     </div>
   )
 }
