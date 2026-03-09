@@ -187,6 +187,24 @@ export function AsciiFlower() {
   const contentCenterXRef = useRef<number | null>(null)
   const stemBottomRef = useRef<number | null>(null)
 
+  const [scale, setScale] = useState(1)
+
+  // Compute scale to fit the flower within the viewport (iframe)
+  useEffect(() => {
+    const computeScale = () => {
+      // Natural rendered size of the ASCII grid
+      const naturalW = 700  // ~140 chars × 5px
+      const naturalH = 850  // ~85 lines × 10px
+      const vw = window.innerWidth
+      const vh = window.innerHeight
+      const s = Math.min(1, vw / naturalW, vh / naturalH)
+      setScale(s)
+    }
+    computeScale()
+    window.addEventListener('resize', computeScale)
+    return () => window.removeEventListener('resize', computeScale)
+  }, [])
+
   useEffect(() => {
     const loadImages = async () => {
       const loadOneImage = (i: number, retries = 3): Promise<HTMLImageElement> => {
@@ -600,6 +618,7 @@ export function AsciiFlower() {
         color: '#c9b99a',
         fontFamily: '"Courier New", monospace',
         letterSpacing: '3px',
+        zoom: scale,
       }}>
         <div style={{ fontSize: '14px', marginBottom: '30px', opacity: 0.6, textTransform: 'lowercase' }}>
           {loadProgress < 100 ? '...' : ''}
@@ -637,10 +656,11 @@ export function AsciiFlower() {
         minHeight: '100vh',
         overflow: 'hidden',
         background: 'transparent',
+        zoom: scale,
       }}
       onMouseMove={handleMouseMove}
     >
-      <div style={{ position: 'relative', zIndex: 1 }}>
+      <div style={{ position: 'relative', zIndex: 1, contain: 'layout style' }}>
         <pre
           ref={preRef}
           style={{
@@ -649,9 +669,9 @@ export function AsciiFlower() {
             lineHeight: '10px',
             letterSpacing: '-0.5px',
             fontFamily: '"Courier New", monospace',
-            textShadow: '0 0 8px rgba(201,185,154,0.08), 0 0 2px rgba(201,185,154,0.05)',
             margin: 0,
             cursor: 'default',
+            willChange: 'transform',
           }}
         >
           {ascii.split('\n').map((line, i, arr) => {
@@ -677,34 +697,35 @@ export function AsciiFlower() {
             const totalX = bendX + rippleX
             const totalY = rippleY
 
-            // Per-character effects when cursor is nearby
-            const CHAR_RADIUS = 12
-            if (mc && mc.strength > 0.05 && absDy < CHAR_RADIUS) {
+            // Per-character glow near cursor — reduced radius, no textShadow for perf
+            const CHAR_RADIUS = 8
+            if (mc && mc.strength > 0.1 && absDy < CHAR_RADIUS) {
+              // Only wrap chars within a horizontal window around cursor
+              const cursorCol = Math.round(mc.x)
+              const colStart = Math.max(0, cursorCol - CHAR_RADIUS)
+              const colEnd = Math.min(line.length, cursorCol + CHAR_RADIUS)
+
+              const before = line.slice(0, colStart)
+              const middle = line.slice(colStart, colEnd)
+              const after = line.slice(colEnd)
+
               return (
                 <div key={i} style={(totalX || totalY) ? { transform: `translate(${totalX}px, ${totalY}px)` } : undefined}>
-                  {line.split('').map((char, j) => {
+                  {before}
+                  {middle.split('').map((char, jj) => {
+                    const j = colStart + jj
                     if (char === ' ') return <span key={j}> </span>
 
                     const dx = j - mc.x
                     const dist2d = Math.sqrt(dx * dx + dy * dy)
-                    const GLOW_SIGMA = 8
+                    const GLOW_SIGMA = 6
                     const intensity = Math.exp(-(dist2d * dist2d) / (2 * GLOW_SIGMA * GLOW_SIGMA)) * mc.strength
 
-                    const waveDelay = dist2d * 0.04
-                    const wavePhase = now / 600 - waveDelay
-                    const wavePulse = (Math.sin(wavePhase) * 0.5 + 0.5) * intensity
+                    if (intensity < 0.05) return <span key={j}>{char}</span>
 
                     const r = Math.round(212 + 43 * intensity)
                     const g = Math.round(197 + 48 * intensity)
                     const b = Math.round(169 + 56 * intensity)
-                    const glow = intensity > 0.25
-                      ? `0 0 ${4 + intensity * 10}px rgba(235,220,180,${intensity * 0.35}), 0 0 ${1 + intensity * 3}px rgba(255,245,220,${intensity * 0.2})`
-                      : ''
-
-                    const scale = 1 + wavePulse * 0.15
-                    const lift = -dy * intensity * 0.4
-
-                    if (intensity < 0.02) return <span key={j}>{char}</span>
 
                     return (
                       <span
@@ -712,14 +733,13 @@ export function AsciiFlower() {
                         style={{
                           display: 'inline-block',
                           color: `rgb(${r},${g},${b})`,
-                          transform: scale !== 1 || lift ? `scale(${scale}) translateY(${lift}px)` : undefined,
-                          textShadow: glow || undefined,
                         }}
                       >
                         {char}
                       </span>
                     )
                   })}
+                  {after}
                 </div>
               )
             }
@@ -770,12 +790,6 @@ export function AsciiFlower() {
             }).join('')
           )
 
-          const flipPhaseY = petal.id * 1.3 + petal.rotation * 0.05
-          const flipPhaseX = petal.id * 0.9 + petal.rotation * 0.03
-          const flipY = Math.sin(elapsed * 2.0 + flipPhaseY) * 75
-          const flipX = Math.sin(elapsed * 1.2 + flipPhaseX) * 40
-          const curlAmount = Math.sin(elapsed * 0.9 + petal.id * 0.7) * 45
-          const arcAmount = Math.sin(elapsed * 0.6 + petal.id * 1.1) * 12
 
           const scaleX = 1 + Math.sin(elapsed * 1.5 + petal.id) * 0.04
           const scaleY = 1 + Math.cos(elapsed * 1.2 + petal.id * 0.5) * 0.03
@@ -789,40 +803,37 @@ export function AsciiFlower() {
             opacity = Math.max(0, 1 - ((elapsed - fadeInEnd) / (lifespan - fadeInEnd)) ** 2)
           }
 
-          // Ghost trail: 3 echoes at past positions
-          const ghosts = [0.08, 0.18, 0.3]
-            .filter(dt => elapsed > dt)
-            .map((dt, gi) => {
-              const gp = posAt(elapsed - dt)
-              const gRot = petal.baseRotation + Math.sin((elapsed - dt) * 1.3 + petal.rotation * 0.08) * 30 + (elapsed - dt) * petal.spinSpeed
-              return (
-                <pre
-                  key={`g${petal.id}-${gi}`}
-                  style={{
-                    position: 'fixed',
-                    left: gp.x - 40,
-                    top: gp.y - 50,
-                    color: '#c9b99a',
-                    fontSize: '10px',
-                    lineHeight: '10px',
-                    letterSpacing: '-1px',
-                    fontFamily: '"Courier New", monospace',
-                    opacity: opacity * (0.12 - gi * 0.03),
-                    transform: `rotate(${gRot}deg) scale(${1 + gi * 0.02})`,
-                    pointerEvents: 'none',
-                    margin: 0,
-                    whiteSpace: 'pre',
-                    filter: `blur(${1 + gi}px)`,
-                  }}
-                >
-                  {animatedTemplate.join('\n')}
-                </pre>
-              )
-            })
+          // Ghost trail: single faded echo (no blur filter for Safari perf)
+          const ghost = elapsed > 0.15 ? (() => {
+            const gp = posAt(elapsed - 0.15)
+            const gRot = petal.baseRotation + Math.sin((elapsed - 0.15) * 1.3 + petal.rotation * 0.08) * 30 + (elapsed - 0.15) * petal.spinSpeed
+            return (
+              <pre
+                key={`g${petal.id}`}
+                style={{
+                  position: 'fixed',
+                  left: gp.x - 40,
+                  top: gp.y - 50,
+                  color: '#c9b99a',
+                  fontSize: '10px',
+                  lineHeight: '10px',
+                  letterSpacing: '-1px',
+                  fontFamily: '"Courier New", monospace',
+                  opacity: opacity * 0.1,
+                  transform: `rotate(${gRot}deg)`,
+                  pointerEvents: 'none',
+                  margin: 0,
+                  whiteSpace: 'pre',
+                }}
+              >
+                {animatedTemplate.join('\n')}
+              </pre>
+            )
+          })() : null
 
           return (
             <React.Fragment key={petal.id}>
-              {ghosts}
+              {ghost}
               <pre
                 style={{
                   position: 'fixed',
@@ -834,29 +845,13 @@ export function AsciiFlower() {
                   letterSpacing: '-1px',
                   fontFamily: '"Courier New", monospace',
                   opacity,
-                  transform: `perspective(300px) rotateY(${flipY}deg) rotateX(${flipX}deg) scale(${scaleX}, ${scaleY}) rotate(${currentRotation}deg)`,
-                  transformStyle: 'preserve-3d',
-                  transformOrigin: 'center center',
+                  transform: `rotate(${currentRotation}deg) scale(${scaleX}, ${scaleY})`,
                   pointerEvents: 'none',
-                  textShadow: '0 0 6px rgba(201,185,154,0.12)',
                   margin: 0,
                   whiteSpace: 'pre'
                 }}
               >
-                {animatedTemplate.map((row, ri) => {
-                  const rowCount = animatedTemplate.length
-                  const rowT = rowCount > 1 ? (ri / (rowCount - 1)) - 0.5 : 0
-                  const arcBow = (0.25 - rowT * rowT) * 4 * arcAmount
-                  const curl = rowT * curlAmount
-                  const bowX = (0.25 - rowT * rowT) * 4 * curlAmount * 0.4
-                  return (
-                    <div key={ri} style={{
-                      transform: `perspective(150px) translateX(${arcBow}px) rotateY(${curl}deg) rotateX(${bowX}deg)`
-                    }}>
-                      {row}
-                    </div>
-                  )
-                })}
+                {animatedTemplate.join('\n')}
               </pre>
             </React.Fragment>
           )
@@ -910,7 +905,6 @@ export function AsciiFlower() {
                 fontSize: '6px',
                 fontFamily: '"Courier New", monospace',
                 opacity,
-                textShadow: '0 0 4px rgba(212,184,118,0.3)',
                 pointerEvents: 'none',
               }}
             >
